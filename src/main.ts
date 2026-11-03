@@ -1,11 +1,11 @@
-import { readServerConfig } from './frameworks/config';
+import { readProviderConfig, readServerConfig } from './frameworks/config';
 import { buildLogger } from './frameworks/logging/logger';
-import { createApp } from './frameworks/http/app';
+import { composeApp } from './frameworks/compose';
 
-const config = readServerConfig();
-const logger = buildLogger(config.logLevel);
-const app = createApp({ logger });
+const server = readServerConfig();
+const logger = buildLogger(server.logLevel);
+const app = composeApp(readProviderConfig(), logger);
 
-app.listen(config.port, () => {
-  logger.info({ port: config.port }, 'payment service listening');
+app.listen(server.port, () => {
+  logger.info({ port: server.port }, 'payment service listening');
 });
