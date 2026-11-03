@@ -16,11 +16,13 @@ export interface ProviderConfig {
   clientSecret: string;
   /** Public address of this service, without a trailing slash: the checkout links start with it. */
   checkoutBaseUrl: string;
+  /** Shared with the merchant: signs every payment notification. */
+  webhookSecret: string;
 }
 
-/** The credentials of the one merchant this provider serves, and its public address. Missing any is a deploy mistake. */
+/** The one merchant this provider serves: its credentials, the shared webhook secret, and this service's public address. Missing any is a deploy mistake. */
 export function readProviderConfig(env: Record<string, string | undefined> = process.env): ProviderConfig {
-  const missing = ['CLIENT_ID', 'CLIENT_SECRET', 'CHECKOUT_BASE_URL'].filter((name) => !env[name]);
+  const missing = ['CLIENT_ID', 'CLIENT_SECRET', 'CHECKOUT_BASE_URL', 'WEBHOOK_SECRET'].filter((name) => !env[name]);
   if (missing.length > 0) {
     throw new Error(`missing ${missing.join(', ')}`);
   }
@@ -28,5 +30,6 @@ export function readProviderConfig(env: Record<string, string | undefined> = pro
     clientId: env.CLIENT_ID as string,
     clientSecret: env.CLIENT_SECRET as string,
     checkoutBaseUrl: (env.CHECKOUT_BASE_URL as string).replace(/\/+$/, ''),
+    webhookSecret: env.WEBHOOK_SECRET as string,
   };
 }

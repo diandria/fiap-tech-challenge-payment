@@ -3,11 +3,15 @@ import { PreferenceItem } from '../entities/Preference';
 import { IssueAccessTokenUseCase } from '../use-cases/IssueAccessTokenUseCase';
 import { CreatePreferenceUseCase } from '../use-cases/CreatePreferenceUseCase';
 import { GetCheckoutUseCase } from '../use-cases/GetCheckoutUseCase';
+import { PayCheckoutUseCase } from '../use-cases/PayCheckoutUseCase';
+import { GetPaymentUseCase } from '../use-cases/GetPaymentUseCase';
 
 export interface ProviderUseCases {
   issueAccessToken: IssueAccessTokenUseCase;
   createPreference: CreatePreferenceUseCase;
   getCheckout: GetCheckoutUseCase;
+  payCheckout: PayCheckoutUseCase;
+  getPayment: GetPaymentUseCase;
 }
 
 interface ItemBody {
@@ -85,6 +89,31 @@ export class ProviderController {
         currency_id: preference.items[0].currencyId,
         external_reference: preference.externalReference,
         status,
+      });
+    } catch (err) { next(err); }
+  }
+
+  async pay(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { payment, merchantNotified } = await this.useCases.payCheckout.execute({
+        preferenceId: req.params.preferenceId,
+        status: req.body?.status,
+      });
+      res.status(201).json({ payment_id: payment.id, status: payment.status, merchant_notified: merchantNotified });
+    } catch (err) { next(err); }
+  }
+
+  async getPayment(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const payment = await this.useCases.getPayment.execute({ paymentId: req.params.paymentId, clientId: res.locals.clientId });
+      res.status(200).json({
+        id: payment.id,
+        status: payment.status,
+        status_detail: payment.statusDetail,
+        transaction_amount: payment.transactionAmount,
+        currency_id: payment.currencyId,
+        external_reference: payment.externalReference,
+        date_created: payment.createdAt.toISOString(),
       });
     } catch (err) { next(err); }
   }
