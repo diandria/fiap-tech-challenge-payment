@@ -123,8 +123,10 @@ Sem HPA e sem PodDisruptionBudget, pela mesma razão: o estado em memória não 
 
 ## CI/CD
 
-O `CI` roda em todo pull request e em todo push na `main`: build, lint, testes, cobertura e validação dos
-manifestos com `kubeconform -strict`. O `CD` dispara quando o `CI` termina verde na `main`:
+O `CI` roda em todo pull request e em todo push na `main`: build, lint, testes, cobertura, validação dos
+manifestos com `kubeconform -strict` e a análise no
+[SonarQube Cloud](https://sonarcloud.io/project/overview?id=diandria_fiap-tech-challenge-payment), que reprova
+o PR quando o quality gate reprova (`sonar.qualitygate.wait`) ou quando o segredo `SONAR_TOKEN` falta. O `CD` dispara quando o `CI` termina verde na `main`:
 
 1. Build da imagem e push no ECR `car-repair-shop-payment`, com a tag do SHA curto do commit.
 2. Leitura das credenciais no SSM, em `/car-repair-shop/payment/client-id`, `client-secret` e
