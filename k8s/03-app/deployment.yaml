@@ -1,0 +1,75 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payment-api
+  namespace: car-repair-shop-payment
+  labels:
+    app: payment-api
+    app.kubernetes.io/name: payment-api
+    app.kubernetes.io/part-of: fiap-tech-challenge
+    app.kubernetes.io/component: api
+spec:
+  # One replica, always: tokens, checkouts and payments live in this pod's
+  # memory. A second replica would answer for checkouts it never saw.
+  replicas: 1
+  revisionHistoryLimit: 3
+  progressDeadlineSeconds: 180
+  selector:
+    matchLabels:
+      app: payment-api
+  # Recreate, not RollingUpdate, for the same reason: never two pods at once.
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        # The last two are what the PodMonitor in infra-k8s selects on.
+        app: payment-api
+        app.kubernetes.io/name: payment-api
+        app.kubernetes.io/part-of: fiap-tech-challenge
+        app.kubernetes.io/component: api
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+      - name: api
+        # Replaced at deploy time with the SHA tag; `latest` is a kubeconform
+        # placeholder.
+        image: car-repair-shop-payment:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: http
+          containerPort: 3000
+        envFrom:
+        # Static, versioned in this repository.
+        - configMapRef:
+            name: payment-config
+        # Written by the CD: CHECKOUT_BASE_URL, the gateway address, which
+        # changes with every environment.
+        - configMapRef:
+            name: payment-runtime
+        # Written by the CD from SSM: CLIENT_ID, CLIENT_SECRET, WEBHOOK_SECRET.
+        - secretRef:
+            name: payment-secret
+        resources:
+          requests:
+            cpu: "50m"
+            memory: "64Mi"
+          limits:
+            cpu: "250m"
+            memory: "256Mi"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          periodSeconds: 10
+          failureThreshold: 3
+          timeoutSeconds: 5
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: http
+          periodSeconds: 5
+          failureThreshold: 3
+          timeoutSeconds: 5
