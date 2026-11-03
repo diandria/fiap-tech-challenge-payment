@@ -1,0 +1,178 @@
+name: CD
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+# One deploy at a time, named per service so it never waits for another one.
+concurrency:
+  group: deploy-payment
+  cancel-in-progress: false
+
+jobs:
+  image:
+    name: Build and push image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: us-east-1
+
+      # `sts get-caller-identity` keeps answering after the Learner Lab session
+      # is revoked; only a call touching a real resource reveals the expiry.
+      - name: Verify credentials are usable
+        run: aws ec2 describe-vpcs --max-items 1 > /dev/null
+
+      - name: Login to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Resolve image tag
+        id: meta
+        run: |
+          echo "sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          echo "registry=${{ steps.ecr.outputs.registry }}/car-repair-shop-payment" >> "$GITHUB_OUTPUT"
+
+      # Tagged by SHA; the ECR repository is IMMUTABLE, so pushing the same SHA
+      # twice fails instead of replacing silently.
+      - name: Build and push
+        env:
+          IMAGE: ${{ steps.meta.outputs.registry }}
+          TAG: ${{ steps.meta.outputs.sha }}
+        run: |
+          docker build -t "$IMAGE:$TAG" .
+          docker push "$IMAGE:$TAG"
+
+  deploy:
+    name: Deploy to EKS
+    needs: image
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    environment:
+      name: production
+      url: ${{ steps.config.outputs.gateway }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: us-east-1
+
+      - name: Connect to the cluster
+        run: aws eks update-kubeconfig --name car-repair-shop --region us-east-1
+
+      - name: Resolve image reference
+        id: meta
+        run: |
+          set -euo pipefail
+          echo "sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          REPO=$(aws ecr describe-repositories --repository-names car-repair-shop-payment \
+            --query 'repositories[0].repositoryUri' --output text)
+          echo "image=$REPO" >> "$GITHUB_OUTPUT"
+
+      # The merchant's credentials and the webhook secret come from the
+      # infra-k8s Terraform; the Billing Service CD reads the same parameters,
+      # so both sides always hold the same values.
+      - name: Read configuration from SSM and AWS
+        id: config
+        run: |
+          set -euo pipefail
+
+          parameter() {
+            aws ssm get-parameter --name "$1" --with-decryption \
+              --query 'Parameter.Value' --output text 2>/dev/null || true
+          }
+
+          CLIENT_ID=$(parameter /car-repair-shop/payment/client-id)
+          CLIENT_SECRET=$(parameter /car-repair-shop/payment/client-secret)
+          WEBHOOK_SECRET=$(parameter /car-repair-shop/payment/webhook-secret)
+          # The checkout links point at the gateway, whose id changes on every
+          # recreation.
+          GATEWAY=$(aws apigatewayv2 get-apis \
+            --query "Items[?Name=='car-repair-shop'].ApiEndpoint | [0]" --output text)
+
+          for name in CLIENT_ID CLIENT_SECRET WEBHOOK_SECRET GATEWAY; do
+            value="${!name}"
+            if [ -z "$value" ] || [ "$value" = "None" ]; then
+              echo "::error::required value missing or empty: $name"
+              exit 1
+            fi
+          done
+
+          echo "::add-mask::$CLIENT_SECRET"
+          echo "::add-mask::$WEBHOOK_SECRET"
+
+          echo "gateway=$GATEWAY" >> "$GITHUB_OUTPUT"
+          {
+            echo "CLIENT_ID=$CLIENT_ID"
+            echo "CLIENT_SECRET=$CLIENT_SECRET"
+            echo "WEBHOOK_SECRET=$WEBHOOK_SECRET"
+            echo "CHECKOUT_BASE_URL=$GATEWAY"
+          } >> "$GITHUB_ENV"
+
+      - name: Apply configuration and secrets
+        run: |
+          set -euo pipefail
+
+          kubectl create configmap payment-runtime -n car-repair-shop-payment \
+            --from-literal=CHECKOUT_BASE_URL="$CHECKOUT_BASE_URL" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+          kubectl create secret generic payment-secret -n car-repair-shop-payment \
+            --from-literal=CLIENT_ID="$CLIENT_ID" \
+            --from-literal=CLIENT_SECRET="$CLIENT_SECRET" \
+            --from-literal=WEBHOOK_SECRET="$WEBHOOK_SECRET" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+          kubectl apply -f k8s/01-config/ -f k8s/02-service/ -f k8s/03-app/
+
+      - name: Deploy the new image
+        id: rollout
+        run: |
+          set -euo pipefail
+          IMAGE="${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.sha }}"
+
+          kubectl set image deployment/payment-api api="$IMAGE" -n car-repair-shop-payment
+          kubectl rollout status deployment/payment-api -n car-repair-shop-payment --timeout=180s
+
+      # Ends with `exit 1` after undoing: a green workflow would hide that the
+      # deploy failed.
+      - name: Roll back on failure
+        if: failure() && steps.rollout.outcome == 'failure'
+        run: |
+          echo "::error::rollout failed; undoing to the previous revision"
+          kubectl rollout undo deployment/payment-api -n car-repair-shop-payment
+          kubectl rollout status deployment/payment-api -n car-repair-shop-payment --timeout=120s
+          kubectl get pods -n car-repair-shop-payment -o wide
+          exit 1
+
+      # Inside the pod, not through the gateway: there, /health belongs to the
+      # OS Service.
+      - name: Smoke check inside the pod
+        run: |
+          set -euo pipefail
+          kubectl exec deploy/payment-api -n car-repair-shop-payment -- \
+            wget -qO- http://localhost:3000/health
+          echo
+          echo "payment service answered /health"
