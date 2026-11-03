@@ -8,6 +8,7 @@ export const providerConfig: ProviderConfig = {
   clientId: 'billing',
   clientSecret: 'billing-secret',
   checkoutBaseUrl: 'https://gateway.example',
+  webhookSecret: 'webhook-secret',
 };
 
 export function provider(): Application {
