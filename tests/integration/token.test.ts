@@ -1,13 +1,10 @@
 import request from 'supertest';
-import { composeApp } from '../../src/frameworks/compose';
-import { silentLogger } from '../helpers/silentLogger';
-
-const config = { clientId: 'billing', clientSecret: 'billing-secret' };
+import { provider } from '../helpers/provider';
 
 describe('POST /oauth/token', () => {
   it('GIVEN the registered credentials WHEN the merchant asks for a token THEN it gets a bearer token that is never live', async () => {
     // GIVEN
-    const app = composeApp(config, silentLogger());
+    const app = provider();
 
     // WHEN
     const res = await request(app).post('/oauth/token').send({
@@ -26,7 +23,7 @@ describe('POST /oauth/token', () => {
 
   it('GIVEN a wrong secret WHEN the merchant asks for a token THEN it answers 400', async () => {
     // GIVEN
-    const app = composeApp(config, silentLogger());
+    const app = provider();
 
     // WHEN
     const res = await request(app).post('/oauth/token').send({
@@ -40,7 +37,7 @@ describe('POST /oauth/token', () => {
 
   it('GIVEN no body WHEN the merchant asks for a token THEN it answers 400', async () => {
     // GIVEN
-    const app = composeApp(config, silentLogger());
+    const app = provider();
 
     // WHEN
     const res = await request(app).post('/oauth/token');
