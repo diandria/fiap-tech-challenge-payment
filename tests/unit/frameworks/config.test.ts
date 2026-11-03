@@ -15,11 +15,12 @@ describe('readServerConfig', () => {
 });
 
 describe('readProviderConfig', () => {
-  it('reads the registered client', () => {
-    expect(readProviderConfig({ CLIENT_ID: 'billing', CLIENT_SECRET: 's3cret' })).toEqual({ clientId: 'billing', clientSecret: 's3cret' });
+  it('reads the registered client and the public checkout address', () => {
+    expect(readProviderConfig({ CLIENT_ID: 'billing', CLIENT_SECRET: 's3cret', CHECKOUT_BASE_URL: 'https://gw.example/' }))
+      .toEqual({ clientId: 'billing', clientSecret: 's3cret', checkoutBaseUrl: 'https://gw.example' });
   });
 
-  it('refuses to start without the client credentials', () => {
-    expect(() => readProviderConfig({ CLIENT_ID: 'billing' })).toThrow('missing CLIENT_SECRET');
+  it('refuses to start without the client credentials or the checkout address', () => {
+    expect(() => readProviderConfig({ CLIENT_ID: 'billing' })).toThrow('missing CLIENT_SECRET, CHECKOUT_BASE_URL');
   });
 });
