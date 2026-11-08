@@ -137,6 +137,11 @@ o PR quando o quality gate reprova (`sonar.qualitygate.wait`) ou quando o segred
 4. Troca da imagem e espera do rollout; se falhar, o CD volta para a revisão anterior e termina com erro.
 5. Verificação de `/health` dentro do pod.
 
+O ambiente roda no AWS Academy e só existe durante uma sessão do lab. Com ele desligado, o CD de um merge
+termina vermelho sem criar nada: indica ambiente desligado, não código quebrado. As restrições da conta e como
+reimplantar estão na seção [Limitação do AWS Academy](https://github.com/diandria/fiap-tech-challenge#limitação-do-aws-academy)
+do README do OS Service.
+
 ## Testes
 
 ```bash
